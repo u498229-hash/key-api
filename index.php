@@ -11,6 +11,17 @@ $STORE_FILE = ($volumePath !== false && $volumePath !== '')
 
 header('Content-Type: application/json; charset=utf-8');
 
+// How many times one key may move to a new device by itself (app reinstalled / new phone). 0 = first device only.
+$MAX_DEVICE_CHANGES = 1;
+
+// While a key is in use on one device, a different device is blocked until the first device has been silent
+// (no successful /verify) for this many minutes. The app should call /verify on every launch (and ideally every
+// few minutes while running) so the first device stays protected.
+$TAKEOVER_WAIT_MINUTES = 30;
+
+// Expired keys are deleted automatically as soon as they expire (0). Set 1 to keep them one more day.
+$PURGE_DAYS = 0;
+
 function reply(int $status, array $data): never {
     http_response_code($status);
     echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -37,6 +48,12 @@ function with_store(bool $write, callable $callback) {
     if (!is_array($records)) $records = [];
     $result = $callback($records);
     if ($write) {
+        // Automatic cleanup of expired keys (runs on every create / verify).
+        global $PURGE_DAYS;
+        $cut = now_utc()->modify('-' . (int)$PURGE_DAYS . ' days');
+        $records = array_values(array_filter($records, function ($item) use ($cut) {
+            try { return new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) > $cut; } catch (Throwable $e) { return false; }
+        }));
         rewind($fh);
         ftruncate($fh, 0);
         fwrite($fh, $guard . json_encode($records, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
@@ -110,14 +127,34 @@ if ($method === 'POST' && ($path === '/v1/auth/key-login' || $path === '/verify'
     $key = trim((string)($data['key'] ?? ''));
     $hwid = trim((string)($data['hwid'] ?? ''));
     if ($key === '' || strlen($key)>200 || $hwid === '' || strlen($hwid)>200) reply(400, ['ok'=>false, 'valid'=>false, 'error'=>'key and hwid are required']);
-    $result = with_store(true, function (&$records) use ($key, $hwid) {
+    $result = with_store(true, function (&$records) use ($key, $hwid, $MAX_DEVICE_CHANGES, $TAKEOVER_WAIT_MINUTES) {
         $hash = key_hash($key);
         foreach ($records as &$item) {
             if (($item['hash'] ?? '') !== $hash) continue;
             if (!empty($item['revoked'])) return ['ok'=>false,'valid'=>false,'error'=>'Key was not accepted.'];
             if (new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= now_utc()) return ['ok'=>false,'valid'=>false,'error'=>'Key has expired.'];
-            if ($item['hwid'] !== null && !hash_equals((string)$item['hwid'], $hwid)) return ['ok'=>false,'valid'=>false,'error'=>'Key is already linked to another device.'];
+            $nowT = now_utc();
+            if ($item['hwid'] !== null && !hash_equals((string)$item['hwid'], $hwid)) {
+                // A different device is asking for a key that is already linked.
+                $changes = (int)($item['rebinds'] ?? 0);
+                if ($changes >= $MAX_DEVICE_CHANGES) return ['ok'=>false,'valid'=>false,'error'=>'Key is already linked to another device.'];
+                // Still in use on the first device? Then block the new device.
+                try { $lastSeen = new DateTimeImmutable($item['last_seen'] ?? $item['created_at'], new DateTimeZone('UTC')); }
+                catch (Throwable $e) { $lastSeen = $nowT->modify('-1 year'); }
+                $idleSeconds = $nowT->getTimestamp() - $lastSeen->getTimestamp();
+                $needSeconds = max(0, (int)$TAKEOVER_WAIT_MINUTES) * 60;
+                if ($idleSeconds < $needSeconds) {
+                    $left = (int)ceil(($needSeconds - $idleSeconds) / 60);
+                    return ['ok'=>false,'valid'=>false,'error'=>'Key is currently in use on another device.','retry_after_minutes'=>$left];
+                }
+                // First device has been inactive: allow a limited number of device changes (reinstall / new phone).
+                $item['hwid'] = $hwid;
+                $item['rebinds'] = $changes + 1;
+                $item['last_seen'] = $nowT->format('Y-m-d\TH:i:s\Z');
+                return ['ok'=>true,'valid'=>true,'expires_at'=>$item['expires_at'],'device_changed'=>true,'device_changes_left'=>$MAX_DEVICE_CHANGES - $changes - 1];
+            }
             if ($item['hwid'] === null) $item['hwid'] = $hwid;
+            $item['last_seen'] = $nowT->format('Y-m-d\TH:i:s\Z');
             return ['ok'=>true,'valid'=>true,'expires_at'=>$item['expires_at']];
         }
         unset($item);

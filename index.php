@@ -67,8 +67,10 @@ HTML;
 if ($method === 'GET' && ($path === '/health' || $path === '/')) reply(200, ['ok'=>true, 'message'=>'Key API is running']);
 
 // Public creation: POST /create with empty body for a generated key, or custom_key for your own.
-if ($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) {
-    $data = request_data();
+// GET /create also works now (generated key, or ?custom_key=...&label=...). POST works exactly as before.
+if (($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) || ($method === 'GET' && $path === '/create')) {
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    $data = $method === 'GET' ? $_GET : request_data();
     $generated = !isset($data['custom_key']) || trim((string)$data['custom_key']) === '';
     $key = $generated ? '' : trim((string)$data['custom_key']);
     if (!$generated && !preg_match('/^[A-Za-z0-9_-]{8,64}$/', $key)) reply(400, ['ok'=>false, 'error'=>'Custom key must be 8-64 letters, numbers, _ or -']);

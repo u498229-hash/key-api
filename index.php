@@ -47,7 +47,7 @@ function with_store(bool $write, callable $callback) {
 }
 function require_admin(array $data): void {
     global $ADMIN_PASSWORD;
-    if ($ADMIN_PASSWORD === 'CHANGE_THIS_TO_YOUR_OWN_PASSWORD' || strlen($ADMIN_PASSWORD) < 10) {
+    if ($ADMIN_PASSWORD === 'ADMIN123' || strlen($ADMIN_PASSWORD) < 10) {
         reply(500, ['ok'=>false, 'error'=>'Set your own admin password in index.php first']);
     }
     $given = (string)($data['password'] ?? '');
@@ -58,6 +58,19 @@ function key_hash(string $key): string { return hash('sha256', $key); }
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+
+// Simple same-origin admin page for creating keys from a mobile browser.
+if ($method === 'GET' && ($path === '/admin' || $path === '/admin/')) {
+    header('Content-Type: text/html; charset=utf-8');
+    echo <<<'HTML'
+<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Key Admin</title>
+<style>body{font:16px system-ui;max-width:520px;margin:32px auto;padding:0 16px;color:#17202a}input,button{box-sizing:border-box;width:100%;padding:13px;margin:8px 0;border:1px solid #bbb;border-radius:8px;font-size:16px}button{background:#1769e0;color:white;border:0;font-weight:700}small{color:#555}pre{white-space:pre-wrap;word-break:break-word;background:#f2f4f7;padding:12px;border-radius:8px}</style>
+<h2>Create an access key</h2><p>Each key lasts 24 hours and binds to the first device that verifies it.</p>
+<form id="f"><label>Admin password</label><input id="p" type="password" required autocomplete="current-password"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: MyCustomKey_7"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
+<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={password:document.getElementById('p').value,label:document.getElementById('l').value};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
+HTML;
+    exit;
+}
 if ($method === 'GET' && ($path === '/health' || $path === '/')) reply(200, ['ok'=>true, 'message'=>'Key API is running']);
 
 // Create a generated key or custom key. POST JSON: {"password":"...", "custom_key":"..."}

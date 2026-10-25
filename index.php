@@ -47,7 +47,7 @@ function with_store(bool $write, callable $callback) {
 }
 function require_admin(array $data): void {
     global $ADMIN_PASSWORD;
-    if ($ADMIN_PASSWORD === 'ADMIN123' || strlen($ADMIN_PASSWORD) < 10) {
+    if ($ADMIN_PASSWORD === 'ADMIN' || strlen($ADMIN_PASSWORD) < 10) {
         reply(500, ['ok'=>false, 'error'=>'Set your own admin password in index.php first']);
     }
     $given = (string)($data['password'] ?? '');
@@ -65,8 +65,8 @@ if ($method === 'GET' && ($path === '/admin' || $path === '/admin/')) {
     echo <<<'HTML'
 <!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Key Admin</title>
 <style>body{font:16px system-ui;max-width:520px;margin:32px auto;padding:0 16px;color:#17202a}input,button{box-sizing:border-box;width:100%;padding:13px;margin:8px 0;border:1px solid #bbb;border-radius:8px;font-size:16px}button{background:#1769e0;color:white;border:0;font-weight:700}small{color:#555}pre{white-space:pre-wrap;word-break:break-word;background:#f2f4f7;padding:12px;border-radius:8px}</style>
-<h2>Create an access key</h2><p>Each key lasts 24 hours and binds to the first device that verifies it.</p>
-<form id="f"><label>Admin password</label><input id="p" type="password" required autocomplete="current-password"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: MyCustomKey_7"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
+<h2>Create an access key</h2><p>Generated keys look like ALONE-CHEATS-ABC. Each key lasts 24 hours and binds to the first device that verifies it.</p>
+<form id="f"><label>Admin password</label><input id="p" type="password" required autocomplete="current-password"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: ALONE-CHEATS-ABC"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
 <script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={password:document.getElementById('p').value,label:document.getElementById('l').value};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
 HTML;
     exit;
@@ -77,13 +77,28 @@ if ($method === 'GET' && ($path === '/health' || $path === '/')) reply(200, ['ok
 if ($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) {
     $data = request_data();
     require_admin($data);
-    $key = isset($data['custom_key']) ? trim((string)$data['custom_key']) : rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '=');
-    if (!preg_match('/^[A-Za-z0-9_-]{8,64}$/', $key)) reply(400, ['ok'=>false, 'error'=>'Custom key must be 8-64 letters, numbers, _ or -']);
+    $generated = !isset($data['custom_key']) || trim((string)$data['custom_key']) === '';
+    $key = $generated ? '' : trim((string)$data['custom_key']);
+    if (!$generated && !preg_match('/^[A-Za-z0-9_-]{8,64}$/', $key)) reply(400, ['ok'=>false, 'error'=>'Custom key must be 8-64 letters, numbers, _ or -']);
     $created = now_utc();
     $expires = $created->modify('+24 hours');
     $createdText = $created->format('Y-m-d\TH:i:s\Z');
     $expiresText = $expires->format('Y-m-d\TH:i:s\Z');
-    $record = with_store(true, function (&$records) use ($key, $createdText, $expiresText, $data) {
+    $record = with_store(true, function (&$records) use (&$key, $generated, $createdText, $expiresText, $data) {
+        // Expired keys no longer need to occupy one of the three-digit generated-key slots.
+        $now = now_utc();
+        $records = array_values(array_filter($records, function ($item) use ($now) {
+            return new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) > $now;
+        }));
+        if ($generated) {
+            $used = [];
+            foreach ($records as $item) $used[$item['hash'] ?? ''] = true;
+            for ($i = 0; $i < 1000; $i++) {
+                $candidate = 'ALONE-CHEATS-' . chr(random_int(65, 90)) . chr(random_int(65, 90)) . chr(random_int(65, 90));
+                if (!isset($used[key_hash($candidate)])) { $key = $candidate; break; }
+            }
+            if ($key === '') return null;
+        }
         $hash = key_hash($key);
         foreach ($records as $item) if (($item['hash'] ?? '') === $hash) return null;
         $id = 1;
@@ -91,7 +106,7 @@ if ($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) {
         $records[] = ['id'=>$id, 'hash'=>$hash, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'hwid'=>null, 'label'=>substr(trim((string)($data['label'] ?? '')),0,100), 'revoked'=>false];
         return ['id'=>$id];
     });
-    if ($record === null) reply(409, ['ok'=>false, 'error'=>'That key already exists']);
+    if ($record === null) reply(409, ['ok'=>false, 'error'=>'That key already exists or no generated key is available; try again later']);
     reply(201, ['ok'=>true, 'id'=>$record['id'], 'key'=>$key, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'duration_hours'=>24]);
 }
 

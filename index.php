@@ -12,7 +12,7 @@ $STORE_FILE = ($volumePath !== false && $volumePath !== '')
 header('Content-Type: application/json; charset=utf-8');
 
 // Admin password for the key list / revoke / device reset tools on /admin. Change it to any password you like.
-$ADMIN_TOKEN = 'ADMIN123';
+$ADMIN_TOKEN = 'ADMIN';
 
 // How many times one key may move to a new device by itself (app reinstalled / new phone). 0 = first device only.
 $MAX_DEVICE_CHANGES = 1;
@@ -87,8 +87,9 @@ if ($method === 'GET' && ($path === '/admin' || $path === '/admin/')) {
 <form id="f"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: ALONE-CHEATS-ABC"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
 <hr><h2>Manage keys</h2><p><small>Enter the admin password (ADMIN_TOKEN). Keys are stored hashed, so each row shows the key id, label and the last 3 letters.</small></p>
 <input id="at" type="password" autocomplete="off" placeholder="Admin password"><button id="ld" type="button">Load keys</button><div id="keys"></div>
+<input id="dk" placeholder="Or type a full key to delete, e.g. ALONE-CHEATS-ABCDEF" autocomplete="off"><button id="dkb" type="button" style="background:#c62828">Delete this key</button><pre id="dout" hidden></pre>
 <style>.row{border:1px solid #ddd;border-radius:8px;padding:10px;margin:8px 0;font-size:14px;word-break:break-word}.row button{width:auto;display:inline-block;padding:8px 12px;margin:6px 6px 0 0;font-size:14px}.row .bad{background:#c62828}</style>
-<script>(function(){const tk=document.getElementById('at'),box=document.getElementById('keys');async function api(p){const r=await fetch(p,{headers:{'X-API-KEY':tk.value}});return r.json();}async function load(){box.textContent='Loading…';let j;try{j=await api('/list');}catch(e){box.textContent='Could not connect';return;}if(!j.ok){box.textContent=j.error||'Error';return;}box.textContent='';if(!j.keys.length){box.textContent='No keys.';return;}j.keys.forEach(k=>{const d=document.createElement('div');d.className='row';const st=k.revoked?'REVOKED':(k.expired?'EXPIRED':(k.device_linked?'Device linked':'Not used yet'));d.textContent='#'+k.id+(k.hint?' ...'+k.hint:'')+(k.label?' · '+k.label:'')+' · '+st+' · device changes: '+k.device_changes+' · expires '+k.expires_at;d.appendChild(document.createElement('br'));const b1=document.createElement('button');b1.type='button';b1.textContent='Reset device';b1.onclick=async()=>{if(!confirm('Unlink key #'+k.id+' from its device?'))return;await api('/reset?id='+k.id);load();};const b2=document.createElement('button');b2.type='button';b2.className='bad';b2.textContent='Revoke';b2.onclick=async()=>{if(!confirm('Revoke key #'+k.id+'? It will stop working.'))return;await api('/revoke?id='+k.id);load();};d.appendChild(b1);d.appendChild(b2);box.appendChild(d);});}document.getElementById('ld').onclick=load;})();</script>
+<script>(function(){const tk=document.getElementById('at'),box=document.getElementById('keys');async function api(p){const r=await fetch(p,{headers:{'X-API-KEY':tk.value}});return r.json();}async function load(){box.textContent='Loading…';let j;try{j=await api('/list');}catch(e){box.textContent='Could not connect';return;}if(!j.ok){box.textContent=j.error||'Error';return;}box.textContent='';if(!j.keys.length){box.textContent='No keys.';return;}j.keys.forEach(k=>{const d=document.createElement('div');d.className='row';const st=k.revoked?'REVOKED':(k.expired?'EXPIRED':(k.device_linked?'Device linked':'Not used yet'));d.textContent='#'+k.id+(k.hint?' ...'+k.hint:'')+(k.label?' · '+k.label:'')+' · '+st+' · device changes: '+k.device_changes+' · expires '+k.expires_at;d.appendChild(document.createElement('br'));const b1=document.createElement('button');b1.type='button';b1.textContent='Reset device';b1.onclick=async()=>{if(!confirm('Unlink key #'+k.id+' from its device?'))return;await api('/reset?id='+k.id);load();};const b2=document.createElement('button');b2.type='button';b2.className='bad';b2.textContent='Revoke';b2.onclick=async()=>{if(!confirm('Revoke key #'+k.id+'? It will stop working.'))return;await api('/revoke?id='+k.id);load();};const b3=document.createElement('button');b3.type='button';b3.className='bad';b3.textContent='Delete';b3.onclick=async()=>{if(!confirm('DELETE key #'+k.id+' permanently?'))return;await api('/delete?id='+k.id);load();};d.appendChild(b1);d.appendChild(b2);d.appendChild(b3);box.appendChild(d);});}document.getElementById('ld').onclick=load;document.getElementById('dkb').onclick=async()=>{const k=document.getElementById('dk').value.trim(),o=document.getElementById('dout');if(!k)return;if(!confirm('Delete key '+k+' permanently?'))return;o.hidden=false;try{const j=await api('/delete?key='+encodeURIComponent(k));o.textContent=j.ok?'Deleted.':(j.error||'Key not found.');if(j.ok){document.getElementById('dk').value='';if(box.childNodes.length)load();}}catch(e){o.textContent='Could not connect';}};})();</script>
 <script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={label:document.getElementById('l').value};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
 HTML;
     exit;
@@ -133,8 +134,8 @@ if (($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) 
     reply(201, ['ok'=>true, 'id'=>$record['id'], 'key'=>$key, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'duration_hours'=>24]);
 }
 
-// Admin tools (need ADMIN_TOKEN): GET /list, GET /revoke?id=N, GET /reset?id=N  (password in header X-API-KEY or ?token=)
-if (in_array($path, ['/list', '/revoke', '/reset'], true) && in_array($method, ['GET', 'POST'], true)) {
+// Admin tools (need ADMIN_TOKEN): GET /list, /revoke?id=N, /reset?id=N, /delete?id=N or /delete?key=KEY  (password in header X-API-KEY or ?token=)
+if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array($method, ['GET', 'POST'], true)) {
     header('Cache-Control: no-store');
     if ($ADMIN_TOKEN === '') reply(403, ['ok'=>false, 'error'=>'Admin tools are disabled: set the ADMIN_TOKEN environment variable']);
     if (!admin_ok()) reply(403, ['ok'=>false, 'error'=>'Wrong admin password']);
@@ -149,6 +150,20 @@ if (in_array($path, ['/list', '/revoke', '/reset'], true) && in_array($method, [
             return $out;
         });
         reply(200, ['ok'=>true, 'count'=>count($rows), 'keys'=>$rows]);
+    }
+    if ($path === '/delete') {
+        // Permanently delete one key: by id (?id=N) or by the full key text (?key=ALONE-CHEATS-XXXXXX).
+        $id = (int)($_GET['id'] ?? 0);
+        $byKey = trim((string)($_GET['key'] ?? ''));
+        $hash = $byKey !== '' ? key_hash($byKey) : '';
+        $done = with_store(true, function (&$records) use ($id, $hash) {
+            foreach ($records as $i => $item) {
+                $match = $hash !== '' ? (($item['hash'] ?? '') === $hash) : ($id > 0 && (int)($item['id'] ?? 0) === $id);
+                if ($match) { array_splice($records, $i, 1); return true; }
+            }
+            return false;
+        });
+        reply($done ? 200 : 404, ['ok'=>$done, 'deleted'=>$done]);
     }
     $id = (int)($_GET['id'] ?? 0);
     $reset = $path === '/reset';

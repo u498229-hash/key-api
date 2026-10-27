@@ -250,7 +250,9 @@ if ($method === 'POST' && ($path === '/v1/auth/key-login' || $path === '/verify'
         unset($item);
         return ['ok'=>false,'valid'=>false,'error'=>'Key was not accepted.'];
     });
-    reply(200, $result);
+    // Match conventional license APIs: invalid, expired, revoked, or over-limit
+    // credentials return HTTP 403 while retaining the JSON valid=false response.
+    reply(!empty($result['valid']) ? 200 : 403, $result);
 }
 
 reply(404, ['ok'=>false, 'error'=>'Endpoint not found']);

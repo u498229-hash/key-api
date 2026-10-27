@@ -12,7 +12,7 @@ $STORE_FILE = ($volumePath !== false && $volumePath !== '')
 header('Content-Type: application/json; charset=utf-8');
 
 // Admin password for the key list / revoke / device reset tools on /admin. Change it to any password you like.
-$ADMIN_TOKEN = 'ADMIN';
+$ADMIN_TOKEN = '5bQHntAcR1J92a46L1eL';
 
 // How many times one key may move to a new device by itself (app reinstalled / new phone). 0 = first device only.
 $MAX_DEVICE_CHANGES = 1;
@@ -26,6 +26,7 @@ $TAKEOVER_WAIT_MINUTES = 30;
 $PURGE_DAYS = 0;
 
 function reply(int $status, array $data): never {
+    if (isset($data['error']) && !isset($data['detail'])) $data['detail'] = $data['error'];
     http_response_code($status);
     echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     exit;
@@ -195,6 +196,14 @@ if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array
 }
 
 // Compatible with the Android app: POST /v1/auth/key-login JSON {"key":"...", "hwid":"..."}
+if (($path === '/v1/auth/key-login' || $path === '/verify') && $method === 'OPTIONS') {
+    header('Allow: POST, OPTIONS');
+    reply(204, []);
+}
+if (($path === '/v1/auth/key-login' || $path === '/verify') && $method !== 'POST') {
+    header('Allow: POST, OPTIONS');
+    reply(405, ['ok'=>false, 'valid'=>false, 'error'=>'Method not allowed; use POST']);
+}
 if ($method === 'POST' && ($path === '/v1/auth/key-login' || $path === '/verify')) {
     $data = request_data();
     $key = trim((string)($data['key'] ?? ''));

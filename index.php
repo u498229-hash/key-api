@@ -2,7 +2,7 @@
 /*
  * Single-file access-key API.
  * Public key creation is enabled; anyone who knows the endpoint can create keys.
- * All keys last exactly 24 hours. No environment variables or PHP packages required.
+ * Creation supports custom duration and device limits. No environment variables or PHP packages required.
  */
 $volumePath = getenv('RAILWAY_VOLUME_MOUNT_PATH');
 $STORE_FILE = ($volumePath !== false && $volumePath !== '')
@@ -83,32 +83,48 @@ if ($method === 'GET' && ($path === '/admin' || $path === '/admin/')) {
     echo <<<'HTML'
 <!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Key Admin</title>
 <style>body{font:16px system-ui;max-width:520px;margin:32px auto;padding:0 16px;color:#17202a}input,button{box-sizing:border-box;width:100%;padding:13px;margin:8px 0;border:1px solid #bbb;border-radius:8px;font-size:16px}button{background:#1769e0;color:white;border:0;font-weight:700}small{color:#555}pre{white-space:pre-wrap;word-break:break-word;background:#f2f4f7;padding:12px;border-radius:8px}</style>
-<h2>Create an access key</h2><p>Generated keys look like ALONE-CHEATS-ABC. Each key lasts 24 hours and binds to the first device that verifies it.</p>
-<form id="f"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: ALONE-CHEATS-ABC"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
+    <h2>Create an access key</h2><p>Generated keys can have a custom duration and device limit.</p>
+<form id="f"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: ALONE-CHEATS-ABC"><label>Hours</label><input id="h" type="number" min="1" max="8760" value="24"><label>Devices</label><input id="dv" type="number" min="1" max="10000" value="1"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
 <hr><h2>Manage keys</h2><p><small>Enter the admin password (ADMIN_TOKEN). Keys are stored hashed, so each row shows the key id, label and the last 3 letters.</small></p>
 <input id="at" type="password" autocomplete="off" placeholder="Admin password"><button id="ld" type="button">Load keys</button><div id="keys"></div>
 <input id="dk" placeholder="Or type a full key to delete, e.g. ALONE-CHEATS-ABCDEF" autocomplete="off"><button id="dkb" type="button" style="background:#c62828">Delete this key</button><pre id="dout" hidden></pre>
 <style>.row{border:1px solid #ddd;border-radius:8px;padding:10px;margin:8px 0;font-size:14px;word-break:break-word}.row button{width:auto;display:inline-block;padding:8px 12px;margin:6px 6px 0 0;font-size:14px}.row .bad{background:#c62828}</style>
 <script>(function(){const tk=document.getElementById('at'),box=document.getElementById('keys');async function api(p){const r=await fetch(p,{headers:{'X-API-KEY':tk.value}});return r.json();}async function load(){box.textContent='Loading…';let j;try{j=await api('/list');}catch(e){box.textContent='Could not connect';return;}if(!j.ok){box.textContent=j.error||'Error';return;}box.textContent='';if(!j.keys.length){box.textContent='No keys.';return;}j.keys.forEach(k=>{const d=document.createElement('div');d.className='row';const st=k.revoked?'REVOKED':(k.expired?'EXPIRED':(k.device_linked?'Device linked':'Not used yet'));d.textContent='#'+k.id+(k.hint?' ...'+k.hint:'')+(k.label?' · '+k.label:'')+' · '+st+' · device changes: '+k.device_changes+' · expires '+k.expires_at;d.appendChild(document.createElement('br'));const b1=document.createElement('button');b1.type='button';b1.textContent='Reset device';b1.onclick=async()=>{if(!confirm('Unlink key #'+k.id+' from its device?'))return;await api('/reset?id='+k.id);load();};const b2=document.createElement('button');b2.type='button';b2.className='bad';b2.textContent='Revoke';b2.onclick=async()=>{if(!confirm('Revoke key #'+k.id+'? It will stop working.'))return;await api('/revoke?id='+k.id);load();};const b3=document.createElement('button');b3.type='button';b3.className='bad';b3.textContent='Delete';b3.onclick=async()=>{if(!confirm('DELETE key #'+k.id+' permanently?'))return;await api('/delete?id='+k.id);load();};d.appendChild(b1);d.appendChild(b2);d.appendChild(b3);box.appendChild(d);});}document.getElementById('ld').onclick=load;document.getElementById('dkb').onclick=async()=>{const k=document.getElementById('dk').value.trim(),o=document.getElementById('dout');if(!k)return;if(!confirm('Delete key '+k+' permanently?'))return;o.hidden=false;try{const j=await api('/delete?key='+encodeURIComponent(k));o.textContent=j.ok?'Deleted.':(j.error||'Key not found.');if(j.ok){document.getElementById('dk').value='';if(box.childNodes.length)load();}}catch(e){o.textContent='Could not connect';}};})();</script>
-<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={label:document.getElementById('l').value};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
+<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={label:document.getElementById('l').value,hours:Number(document.getElementById('h').value),devices:Number(document.getElementById('dv').value)};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
 HTML;
     exit;
 }
 if ($method === 'GET' && ($path === '/health' || $path === '/')) reply(200, ['ok'=>true, 'message'=>'Key API is running']);
 
-// Public creation: POST /create with empty body for a generated key, or custom_key for your own.
-// GET /create also works now (generated key, or ?custom_key=...&label=...). POST works exactly as before.
-if (($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) || ($method === 'GET' && $path === '/create')) {
+// Public creation: /create or /createhours with custom_key (or key), hours and devices.
+// Compact form is also supported: /createhours5?key=MY-KEY&devices=100
+$compactHours = null;
+$compactDevices = null;
+if (preg_match('#^/createhours([0-9]+)(?:devices?|/devices?)([0-9]+)$#', $path, $m)) {
+    $compactHours = (int)$m[1];
+    $compactDevices = (int)$m[2];
+} elseif (preg_match('#^/createhours([0-9]+)$#', $path, $m)) {
+    $compactHours = (int)$m[1];
+}
+$isCreateEndpoint = $path === '/create' || $path === '/createhours' || $path === '/v1/admin/keys' || $compactHours !== null;
+if (($method === 'POST' && $isCreateEndpoint) || ($method === 'GET' && $isCreateEndpoint && $path !== '/v1/admin/keys')) {
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     $data = $method === 'GET' ? $_GET : request_data();
-    $generated = !isset($data['custom_key']) || trim((string)$data['custom_key']) === '';
-    $key = $generated ? '' : trim((string)$data['custom_key']);
+    $requestedKey = isset($data['custom_key']) ? $data['custom_key'] : ($data['key'] ?? '');
+    $generated = trim((string)$requestedKey) === '';
+    $key = $generated ? '' : trim((string)$requestedKey);
     if (!$generated && !preg_match('/^[A-Za-z0-9_-]{8,64}$/', $key)) reply(400, ['ok'=>false, 'error'=>'Custom key must be 8-64 letters, numbers, _ or -']);
+    $hours = filter_var($compactHours ?? ($data['hours'] ?? 24), FILTER_VALIDATE_INT);
+    $devices = filter_var($compactDevices ?? ($data['devices'] ?? 1), FILTER_VALIDATE_INT);
+    if ($hours === false || $hours < 1) reply(400, ['ok'=>false, 'error'=>'hours must be a positive integer']);
+    if ($devices === false || $devices < 1) reply(400, ['ok'=>false, 'error'=>'devices must be a positive integer']);
     $created = now_utc();
-    $expires = $created->modify('+24 hours');
+    try { $expires = $created->modify('+' . $hours . ' hours'); }
+    catch (Throwable $e) { reply(400, ['ok'=>false, 'error'=>'hours value is too large for the date system']); }
+    if ($expires === false) reply(400, ['ok'=>false, 'error'=>'hours value is too large for the date system']);
     $createdText = $created->format('Y-m-d\TH:i:s\Z');
     $expiresText = $expires->format('Y-m-d\TH:i:s\Z');
-    $record = with_store(true, function (&$records) use (&$key, $generated, $createdText, $expiresText, $data) {
+    $record = with_store(true, function (&$records) use (&$key, $generated, $createdText, $expiresText, $data, $devices) {
         // Expired keys no longer need to occupy one of the three-letter generated-key slots.
         $now = now_utc();
         $records = array_values(array_filter($records, function ($item) use ($now) {
@@ -127,11 +143,11 @@ if (($method === 'POST' && ($path === '/create' || $path === '/v1/admin/keys')) 
         foreach ($records as $item) if (($item['hash'] ?? '') === $hash) return null;
         $id = 1;
         foreach ($records as $item) $id = max($id, (int)($item['id'] ?? 0) + 1);
-        $records[] = ['id'=>$id, 'hash'=>$hash, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'hwid'=>null, 'hint'=>substr($key, -3), 'label'=>substr(trim((string)($data['label'] ?? '')),0,100), 'revoked'=>false];
+        $records[] = ['id'=>$id, 'hash'=>$hash, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'hwid'=>null, 'device_hwids'=>[], 'max_devices'=>$devices, 'hint'=>substr($key, -3), 'label'=>substr(trim((string)($data['label'] ?? '')),0,100), 'revoked'=>false];
         return ['id'=>$id];
     });
     if ($record === null) reply(409, ['ok'=>false, 'error'=>'That key already exists or no generated key is available; try again later']);
-    reply(201, ['ok'=>true, 'id'=>$record['id'], 'key'=>$key, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'duration_hours'=>24]);
+    reply(201, ['ok'=>true, 'id'=>$record['id'], 'key'=>$key, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'duration_hours'=>$hours, 'max_devices'=>$devices]);
 }
 
 // Admin tools (need ADMIN_TOKEN): GET /list, /revoke?id=N, /reset?id=N, /delete?id=N or /delete?key=KEY  (password in header X-API-KEY or ?token=)
@@ -145,7 +161,7 @@ if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array
             $out = [];
             foreach ($records as $item) {
                 try { $expired = new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= $now; } catch (Throwable $e) { $expired = true; }
-                $out[] = ['id'=>$item['id'] ?? null, 'hint'=>$item['hint'] ?? '', 'label'=>$item['label'] ?? '', 'created_at'=>$item['created_at'] ?? '', 'expires_at'=>$item['expires_at'] ?? '', 'device_linked'=>($item['hwid'] ?? null) !== null, 'device_changes'=>(int)($item['rebinds'] ?? 0), 'revoked'=>!empty($item['revoked']), 'expired'=>$expired];
+                $out[] = ['id'=>$item['id'] ?? null, 'hint'=>$item['hint'] ?? '', 'label'=>$item['label'] ?? '', 'created_at'=>$item['created_at'] ?? '', 'expires_at'=>$item['expires_at'] ?? '', 'device_linked'=>($item['hwid'] ?? null) !== null, 'devices_used'=>is_array($item['device_hwids'] ?? null) ? count($item['device_hwids']) : (($item['hwid'] ?? null) !== null ? 1 : 0), 'max_devices'=>(int)($item['max_devices'] ?? 1), 'device_changes'=>(int)($item['rebinds'] ?? 0), 'revoked'=>!empty($item['revoked']), 'expired'=>$expired];
             }
             return $out;
         });
@@ -170,7 +186,7 @@ if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array
     $done = with_store(true, function (&$records) use ($id, $reset) {
         foreach ($records as &$item) {
             if ((int)($item['id'] ?? 0) !== $id) continue;
-            if ($reset) { $item['hwid'] = null; $item['rebinds'] = 0; unset($item['last_seen']); } else { $item['revoked'] = true; }
+            if ($reset) { $item['hwid'] = null; $item['device_hwids'] = []; $item['rebinds'] = 0; unset($item['last_seen']); } else { $item['revoked'] = true; }
             return true;
         }
         return false;
@@ -191,6 +207,23 @@ if ($method === 'POST' && ($path === '/v1/auth/key-login' || $path === '/verify'
             if (!empty($item['revoked'])) return ['ok'=>false,'valid'=>false,'error'=>'Key was not accepted.'];
             if (new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= now_utc()) return ['ok'=>false,'valid'=>false,'error'=>'Key has expired.'];
             $nowT = now_utc();
+            // New keys use an exact device limit. Legacy records without
+            // max_devices keep the original one-device/rebind behavior below.
+            $isNewDeviceLimitKey = array_key_exists('max_devices', $item);
+            $maxDevices = max(1, (int)($item['max_devices'] ?? 1));
+            if ($isNewDeviceLimitKey) {
+                $knownDevices = is_array($item['device_hwids'] ?? null) ? $item['device_hwids'] : [];
+                if (in_array($hwid, $knownDevices, true)) {
+                    $item['last_seen'] = $nowT->format('Y-m-d\TH:i:s\Z');
+                    return ['ok'=>true,'valid'=>true,'expires_at'=>$item['expires_at'],'devices_used'=>count($knownDevices),'max_devices'=>$maxDevices];
+                }
+                if (count($knownDevices) >= $maxDevices) return ['ok'=>false,'valid'=>false,'error'=>'Maximum device limit reached.'];
+                $knownDevices[] = $hwid;
+                $item['device_hwids'] = $knownDevices;
+                if ($item['hwid'] === null) $item['hwid'] = $hwid;
+                $item['last_seen'] = $nowT->format('Y-m-d\TH:i:s\Z');
+                return ['ok'=>true,'valid'=>true,'expires_at'=>$item['expires_at'],'devices_used'=>count($knownDevices),'max_devices'=>$maxDevices];
+            }
             if ($item['hwid'] !== null && !hash_equals((string)$item['hwid'], $hwid)) {
                 // A different device is asking for a key that is already linked.
                 $changes = (int)($item['rebinds'] ?? 0);

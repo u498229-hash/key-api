@@ -12,7 +12,7 @@ $STORE_FILE = ($volumePath !== false && $volumePath !== '')
 header('Content-Type: application/json; charset=utf-8');
 
 // Admin password for the key list / revoke / device reset tools on /admin. Change it to any password you like.
-$ADMIN_TOKEN = '5bQHntAcR1J92a46L1eL';
+$ADMIN_TOKEN = 'ADMIN';
 
 // How many times one key may move to a new device by itself (app reinstalled / new phone). 0 = first device only.
 $MAX_DEVICE_CHANGES = 1;
@@ -56,6 +56,8 @@ function with_store(bool $write, callable $callback) {
         global $PURGE_DAYS;
         $cut = now_utc()->modify('-' . (int)$PURGE_DAYS . ' days');
         $records = array_values(array_filter($records, function ($item) use ($cut) {
+            // A first-login timer has no expiry until its first successful verify.
+            if (empty($item['expires_at'])) return true;
             try { return new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) > $cut; } catch (Throwable $e) { return false; }
         }));
         rewind($fh);
@@ -85,13 +87,13 @@ if ($method === 'GET' && ($path === '/admin' || $path === '/admin/')) {
 <!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Key Admin</title>
 <style>body{font:16px system-ui;max-width:520px;margin:32px auto;padding:0 16px;color:#17202a}input,button{box-sizing:border-box;width:100%;padding:13px;margin:8px 0;border:1px solid #bbb;border-radius:8px;font-size:16px}button{background:#1769e0;color:white;border:0;font-weight:700}small{color:#555}pre{white-space:pre-wrap;word-break:break-word;background:#f2f4f7;padding:12px;border-radius:8px}</style>
     <h2>Create an access key</h2><p>Generated keys can have a custom duration and device limit.</p>
-<form id="f"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: ALONE-CHEATS-ABC"><label>Hours</label><input id="h" type="number" min="1" max="8760" value="24"><label>Devices</label><input id="dv" type="number" min="1" max="10000" value="1"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
+<form id="f"><label>Custom key (leave empty to generate one)</label><input id="k" maxlength="64" placeholder="Example: ALONE-CHEATS-ABC"><label>Duration</label><input id="h" type="number" min="1" value="24"><label>Unit</label><select id="u" style="box-sizing:border-box;width:100%;padding:13px;margin:8px 0;border:1px solid #bbb;border-radius:8px;font-size:16px"><option value="minutes">Minutes</option><option value="hours" selected>Hours</option><option value="days">Days</option><option value="months">Months</option></select><label>Devices</label><input id="dv" type="number" min="1" value="1"><label>Label (optional)</label><input id="l" maxlength="100" placeholder="Who is this for?"><button>Create key</button></form><pre id="out" hidden></pre>
 <hr><h2>Manage keys</h2><p><small>Enter the admin password (ADMIN_TOKEN). Keys are stored hashed, so each row shows the key id, label and the last 3 letters.</small></p>
 <input id="at" type="password" autocomplete="off" placeholder="Admin password"><button id="ld" type="button">Load keys</button><div id="keys"></div>
 <input id="dk" placeholder="Or type a full key to delete, e.g. ALONE-CHEATS-ABCDEF" autocomplete="off"><button id="dkb" type="button" style="background:#c62828">Delete this key</button><pre id="dout" hidden></pre>
 <style>.row{border:1px solid #ddd;border-radius:8px;padding:10px;margin:8px 0;font-size:14px;word-break:break-word}.row button{width:auto;display:inline-block;padding:8px 12px;margin:6px 6px 0 0;font-size:14px}.row .bad{background:#c62828}</style>
 <script>(function(){const tk=document.getElementById('at'),box=document.getElementById('keys');async function api(p){const r=await fetch(p,{headers:{'X-API-KEY':tk.value}});return r.json();}async function load(){box.textContent='Loading…';let j;try{j=await api('/list');}catch(e){box.textContent='Could not connect';return;}if(!j.ok){box.textContent=j.error||'Error';return;}box.textContent='';if(!j.keys.length){box.textContent='No keys.';return;}j.keys.forEach(k=>{const d=document.createElement('div');d.className='row';const st=k.revoked?'REVOKED':(k.expired?'EXPIRED':(k.device_linked?'Device linked':'Not used yet'));d.textContent='#'+k.id+(k.hint?' ...'+k.hint:'')+(k.label?' · '+k.label:'')+' · '+st+' · device changes: '+k.device_changes+' · expires '+k.expires_at;d.appendChild(document.createElement('br'));const b1=document.createElement('button');b1.type='button';b1.textContent='Reset device';b1.onclick=async()=>{if(!confirm('Unlink key #'+k.id+' from its device?'))return;await api('/reset?id='+k.id);load();};const b2=document.createElement('button');b2.type='button';b2.className='bad';b2.textContent='Revoke';b2.onclick=async()=>{if(!confirm('Revoke key #'+k.id+'? It will stop working.'))return;await api('/revoke?id='+k.id);load();};const b3=document.createElement('button');b3.type='button';b3.className='bad';b3.textContent='Delete';b3.onclick=async()=>{if(!confirm('DELETE key #'+k.id+' permanently?'))return;await api('/delete?id='+k.id);load();};d.appendChild(b1);d.appendChild(b2);d.appendChild(b3);box.appendChild(d);});}document.getElementById('ld').onclick=load;document.getElementById('dkb').onclick=async()=>{const k=document.getElementById('dk').value.trim(),o=document.getElementById('dout');if(!k)return;if(!confirm('Delete key '+k+' permanently?'))return;o.hidden=false;try{const j=await api('/delete?key='+encodeURIComponent(k));o.textContent=j.ok?'Deleted.':(j.error||'Key not found.');if(j.ok){document.getElementById('dk').value='';if(box.childNodes.length)load();}}catch(e){o.textContent='Could not connect';}};})();</script>
-<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={label:document.getElementById('l').value,hours:Number(document.getElementById('h').value),devices:Number(document.getElementById('dv').value)};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
+<script>document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();const o=document.getElementById('out');o.hidden=false;o.textContent='Creating…';const d={duration:Number(document.getElementById('h').value),unit:document.getElementById('u').value,devices:Number(document.getElementById('dv').value),label:document.getElementById('l').value};const k=document.getElementById('k').value.trim();if(k)d.custom_key=k;try{const r=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json();o.textContent=JSON.stringify(j,null,2);}catch(err){o.textContent='Could not connect: '+err;}});</script></html>
 HTML;
     exit;
 }
@@ -119,17 +121,24 @@ if (($method === 'POST' && $isCreateEndpoint) || ($method === 'GET' && $isCreate
     $devices = filter_var($compactDevices ?? ($data['devices'] ?? 1), FILTER_VALIDATE_INT);
     if ($hours === false || $hours < 1) reply(400, ['ok'=>false, 'error'=>'hours must be a positive integer']);
     if ($devices === false || $devices < 1) reply(400, ['ok'=>false, 'error'=>'devices must be a positive integer']);
+    $unit = strtolower(trim((string)($data['unit'] ?? $data['duration_unit'] ?? 'hours')));
+    if ($unit === 'hour') $unit = 'hours';
+    if ($unit === 'minute') $unit = 'minutes';
+    if ($unit === 'day') $unit = 'days';
+    if ($unit === 'month') $unit = 'months';
+    if (!in_array($unit, ['minutes', 'hours', 'days', 'months'], true)) reply(400, ['ok'=>false, 'error'=>'unit must be minutes, hours, days, or months']);
+    $duration = filter_var($data['duration'] ?? ($compactHours ?? ($data['hours'] ?? 24)), FILTER_VALIDATE_INT);
+    if ($duration === false || $duration < 1) reply(400, ['ok'=>false, 'error'=>'duration must be a positive integer']);
     $created = now_utc();
-    try { $expires = $created->modify('+' . $hours . ' hours'); }
-    catch (Throwable $e) { reply(400, ['ok'=>false, 'error'=>'hours value is too large for the date system']); }
-    if ($expires === false) reply(400, ['ok'=>false, 'error'=>'hours value is too large for the date system']);
+    $expires = null; // Timer starts on first successful login.
     $createdText = $created->format('Y-m-d\TH:i:s\Z');
-    $expiresText = $expires->format('Y-m-d\TH:i:s\Z');
-    $record = with_store(true, function (&$records) use (&$key, $generated, $createdText, $expiresText, $data, $devices) {
+    $expiresText = null;
+    $record = with_store(true, function (&$records) use (&$key, $generated, $createdText, $expiresText, $data, $devices, $duration, $unit) {
         // Expired keys no longer need to occupy one of the three-letter generated-key slots.
         $now = now_utc();
         $records = array_values(array_filter($records, function ($item) use ($now) {
-            return new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) > $now;
+            if (empty($item['expires_at'])) return true;
+            try { return new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) > $now; } catch (Throwable $e) { return false; }
         }));
         if ($generated) {
             $used = [];
@@ -144,15 +153,15 @@ if (($method === 'POST' && $isCreateEndpoint) || ($method === 'GET' && $isCreate
         foreach ($records as $item) if (($item['hash'] ?? '') === $hash) return null;
         $id = 1;
         foreach ($records as $item) $id = max($id, (int)($item['id'] ?? 0) + 1);
-        $records[] = ['id'=>$id, 'hash'=>$hash, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'hwid'=>null, 'device_hwids'=>[], 'max_devices'=>$devices, 'hint'=>substr($key, -3), 'label'=>substr(trim((string)($data['label'] ?? '')),0,100), 'revoked'=>false];
+        $records[] = ['id'=>$id, 'hash'=>$hash, 'created_at'=>$createdText, 'started_at'=>null, 'expires_at'=>$expiresText, 'duration'=>$duration, 'duration_unit'=>$unit, 'status'=>'active', 'hwid'=>null, 'device_hwids'=>[], 'max_devices'=>$devices, 'hint'=>substr($key, -3), 'label'=>substr(trim((string)($data['label'] ?? '')),0,100), 'revoked'=>false];
         return ['id'=>$id];
     });
     if ($record === null) reply(409, ['ok'=>false, 'error'=>'That key already exists or no generated key is available; try again later']);
-    reply(201, ['ok'=>true, 'id'=>$record['id'], 'key'=>$key, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'duration_hours'=>$hours, 'max_devices'=>$devices]);
+    reply(201, ['ok'=>true, 'id'=>$record['id'], 'key'=>$key, 'created_at'=>$createdText, 'expires_at'=>$expiresText, 'duration'=>$duration, 'duration_unit'=>$unit, 'timer'=>'starts_on_first_login', 'max_devices'=>$devices]);
 }
 
-// Admin tools (need ADMIN_TOKEN): GET /list, /revoke?id=N, /reset?id=N, /delete?id=N or /delete?key=KEY  (password in header X-API-KEY or ?token=)
-if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array($method, ['GET', 'POST'], true)) {
+// Admin tools (need ADMIN_TOKEN): list, reset, revoke, block, disable, enable, delete.
+if (in_array($path, ['/list', '/revoke', '/reset', '/block', '/disable', '/enable', '/delete'], true) && in_array($method, ['GET', 'POST'], true)) {
     header('Cache-Control: no-store');
     if ($ADMIN_TOKEN === '') reply(403, ['ok'=>false, 'error'=>'Admin tools are disabled: set the ADMIN_TOKEN environment variable']);
     if (!admin_ok()) reply(403, ['ok'=>false, 'error'=>'Wrong admin password']);
@@ -161,8 +170,8 @@ if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array
             $now = now_utc();
             $out = [];
             foreach ($records as $item) {
-                try { $expired = new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= $now; } catch (Throwable $e) { $expired = true; }
-                $out[] = ['id'=>$item['id'] ?? null, 'hint'=>$item['hint'] ?? '', 'label'=>$item['label'] ?? '', 'created_at'=>$item['created_at'] ?? '', 'expires_at'=>$item['expires_at'] ?? '', 'device_linked'=>($item['hwid'] ?? null) !== null, 'devices_used'=>is_array($item['device_hwids'] ?? null) ? count($item['device_hwids']) : (($item['hwid'] ?? null) !== null ? 1 : 0), 'max_devices'=>(int)($item['max_devices'] ?? 1), 'device_changes'=>(int)($item['rebinds'] ?? 0), 'revoked'=>!empty($item['revoked']), 'expired'=>$expired];
+                try { $expired = !empty($item['expires_at']) && new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= $now; } catch (Throwable $e) { $expired = true; }
+                $out[] = ['id'=>$item['id'] ?? null, 'hint'=>$item['hint'] ?? '', 'label'=>$item['label'] ?? '', 'status'=>$item['status'] ?? (!empty($item['revoked']) ? 'revoked' : 'active'), 'created_at'=>$item['created_at'] ?? '', 'started_at'=>$item['started_at'] ?? null, 'expires_at'=>$item['expires_at'] ?? null, 'duration'=>$item['duration'] ?? null, 'duration_unit'=>$item['duration_unit'] ?? null, 'device_linked'=>($item['hwid'] ?? null) !== null, 'devices_used'=>is_array($item['device_hwids'] ?? null) ? count($item['device_hwids']) : (($item['hwid'] ?? null) !== null ? 1 : 0), 'max_devices'=>(int)($item['max_devices'] ?? 1), 'device_changes'=>(int)($item['rebinds'] ?? 0), 'revoked'=>!empty($item['revoked']), 'expired'=>$expired];
             }
             return $out;
         });
@@ -184,15 +193,20 @@ if (in_array($path, ['/list', '/revoke', '/reset', '/delete'], true) && in_array
     }
     $id = (int)($_GET['id'] ?? 0);
     $reset = $path === '/reset';
-    $done = with_store(true, function (&$records) use ($id, $reset) {
+    $newStatus = $path === '/block' ? 'blocked' : ($path === '/disable' ? 'disabled' : ($path === '/enable' ? 'active' : null));
+    $done = with_store(true, function (&$records) use ($id, $reset, $newStatus) {
         foreach ($records as &$item) {
             if ((int)($item['id'] ?? 0) !== $id) continue;
-            if ($reset) { $item['hwid'] = null; $item['device_hwids'] = []; $item['rebinds'] = 0; unset($item['last_seen']); } else { $item['revoked'] = true; }
+            if ($reset) { $item['hwid'] = null; $item['device_hwids'] = []; $item['rebinds'] = 0; if (array_key_exists('duration', $item)) { $item['started_at'] = null; $item['expires_at'] = null; $item['status'] = 'active'; } unset($item['last_seen']); } else { $item['revoked'] = true; $item['status'] = 'revoked'; }
+            if ($newStatus !== null) $item['status'] = $newStatus;
             return true;
         }
         return false;
     });
-    reply($done ? 200 : 404, ['ok'=>$done, ($reset ? 'reset_id' : 'revoked_id')=>$done ? $id : null]);
+    $resultField = $reset ? 'reset_id' : ($newStatus !== null ? 'status_id' : 'revoked_id');
+    $payload = ['ok'=>$done, $resultField=>$done ? $id : null];
+    if ($newStatus !== null) $payload['status'] = $done ? $newStatus : null;
+    reply($done ? 200 : 404, $payload);
 }
 
 // Compatible with the Android app: POST /v1/auth/key-login JSON {"key":"...", "hwid":"..."}
@@ -214,8 +228,24 @@ if ($method === 'POST' && ($path === '/v1/auth/key-login' || $path === '/verify'
         foreach ($records as &$item) {
             if (($item['hash'] ?? '') !== $hash) continue;
             if (!empty($item['revoked'])) return ['ok'=>false,'valid'=>false,'error'=>'Key was not accepted.'];
-            if (new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= now_utc()) return ['ok'=>false,'valid'=>false,'error'=>'Key has expired.'];
             $nowT = now_utc();
+            $status = (string)($item['status'] ?? 'active');
+            if ($status === 'blocked') return ['ok'=>false,'valid'=>false,'error'=>'Key is blocked.'];
+            if ($status === 'disabled') return ['ok'=>false,'valid'=>false,'error'=>'Key is disabled.'];
+            if (empty($item['expires_at']) && !empty($item['duration'])) {
+                $amount = max(1, (int)$item['duration']);
+                $unit = (string)($item['duration_unit'] ?? 'hours');
+                try {
+                    $item['started_at'] = $nowT->format('Y-m-d\TH:i:s\Z');
+                    $item['expires_at'] = $nowT->modify('+' . $amount . ' ' . $unit)->format('Y-m-d\TH:i:s\Z');
+                } catch (Throwable $e) {
+                    return ['ok'=>false,'valid'=>false,'error'=>'Key duration is invalid.'];
+                }
+            }
+            if (!empty($item['expires_at']) && new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= $nowT) {
+                $item['status'] = 'expired';
+                return ['ok'=>false,'valid'=>false,'error'=>'Key has expired.'];
+            }
             // New keys use an exact device limit. Legacy records without
             // max_devices keep the original one-device/rebind behavior below.
             $isNewDeviceLimitKey = array_key_exists('max_devices', $item);

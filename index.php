@@ -12,7 +12,7 @@ $STORE_FILE = ($volumePath !== false && $volumePath !== '')
 header('Content-Type: application/json; charset=utf-8');
 
 // Admin password for the key list / revoke / device reset tools on /admin. Change it to any password you like.
-$ADMIN_TOKEN = 'ADMIN';
+$ADMIN_TOKEN = '5bQHntAcR1J92a46L1eL';
 
 // Secret used to sign the /connect token. Keep it the same as the secret string inside the app's Login() code.
 // (This value is the one already present in your PRABIR__LOGIN_X999.h. For better safety change it here AND in the .h.)
@@ -241,6 +241,82 @@ if ($method === 'POST' && $path === '/connect') {
     if (empty($r['ok'])) reply(200, ['status'=>false, 'reason'=>$r['error'] ?? 'Key was not accepted.']);
     global $CONNECT_SECRET;
     reply(200, ['status'=>true, 'data'=>['token'=>md5($game . '-' . $key . '-' . $serial . '-' . $CONNECT_SECRET), 'rng'=>time(), 'expires_at'=>$r['expires_at'] ?? '']]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// HEX app (LoginActivity.java) support. In the app set:  BASE_URL = "https://YOUR-DOMAIN/api"
+//   GET  /api/check?key=KEY                    -> {"status":"INACTIVE|INVALID|EXPIRED","valid":false}
+//   POST /api/activate {key,username,device}   -> {"success":true,"key":"...","username":"..."}   (device lock happens here)
+//   POST /api/login    {key[,device]}          -> {"success":true,"username":..,"key":..,"remaining":"23h 10m","remaining_hours":23,...}
+// check never says "valid" for a live key on purpose, so the app always goes through /activate, which sends the device id.
+// ---------------------------------------------------------------------------------------------
+if (strpos($path, '/api/') === 0) {
+    header('Cache-Control: no-store');
+    $api = substr($path, 5);
+
+    if ($method === 'GET' && $api === 'check') {
+        $key = trim((string)($_GET['key'] ?? ''));
+        if ($key === '' || strlen($key) > 200) reply(200, ['status'=>'INVALID', 'valid'=>false]);
+        $hash = key_hash($key);
+        $st = with_store(false, function (&$records) use ($hash) {
+            foreach ($records as $item) {
+                if (($item['hash'] ?? '') !== $hash) continue;
+                if (!empty($item['revoked'])) return 'INVALID';
+                try { if (new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC')) <= now_utc()) return 'EXPIRED'; } catch (Throwable $e) { return 'EXPIRED'; }
+                return 'INACTIVE';
+            }
+            return 'INVALID';
+        });
+        reply(200, ['status'=>$st, 'valid'=>false]);
+    }
+
+    if ($method === 'POST' && $api === 'activate') {
+        $data = request_data();
+        $key = trim((string)($data['key'] ?? ''));
+        $device = trim((string)($data['device'] ?? ''));
+        $username = preg_replace('/[^A-Za-z0-9_ -]/', '', substr(trim((string)($data['username'] ?? '')), 0, 40));
+        if ($username === '') $username = 'User';
+        if ($key === '' || strlen($key) > 200 || $device === '' || strlen($device) > 200) reply(200, ['success'=>false, 'error'=>'Key and device are required']);
+        $r = verify_key($key, $device);
+        if (empty($r['ok'])) {
+            $err = $r['error'] ?? 'Key was not accepted.';
+            if (!empty($r['retry_after_minutes'])) $err .= ' Try again in ' . (int)$r['retry_after_minutes'] . ' min.';
+            reply(200, ['success'=>false, 'error'=>$err]);
+        }
+        $hash = key_hash($key);
+        with_store(true, function (&$records) use ($hash, $username) {
+            foreach ($records as &$item) if (($item['hash'] ?? '') === $hash) { $item['username'] = $username; break; }
+        });
+        reply(200, ['success'=>true, 'key'=>$key, 'username'=>$username]);
+    }
+
+    if ($method === 'POST' && $api === 'login') {
+        $data = request_data();
+        $key = trim((string)($data['key'] ?? ''));
+        $device = trim((string)($data['device'] ?? ''));
+        if ($key === '' || strlen($key) > 200) reply(200, ['success'=>false, 'error'=>'Key is required']);
+        $hash = key_hash($key);
+        $res = with_store(true, function (&$records) use ($hash, $key, $device) {
+            foreach ($records as &$item) {
+                if (($item['hash'] ?? '') !== $hash) continue;
+                if (!empty($item['revoked'])) return ['success'=>false, 'error'=>'Key was not accepted.'];
+                $left = new DateTimeImmutable($item['expires_at'], new DateTimeZone('UTC'));
+                $now = now_utc();
+                if ($left <= $now) return ['success'=>false, 'error'=>'Key has expired.'];
+                if (($item['hwid'] ?? null) === null) return ['success'=>false, 'error'=>'Key is not activated yet.'];
+                if ($device !== '' && !hash_equals((string)$item['hwid'], $device)) return ['success'=>false, 'error'=>'Key is linked to another device.'];
+                if ($device !== '') $item['last_seen'] = $now->format('Y-m-d\TH:i:s\Z');
+                $sec = $left->getTimestamp() - $now->getTimestamp();
+                return ['success'=>true, 'username'=>($item['username'] ?? 'User'), 'key'=>$key,
+                        'remaining'=>intdiv($sec, 3600) . 'h ' . intdiv($sec % 3600, 60) . 'm',
+                        'remaining_hours'=>intdiv($sec, 3600),
+                        'device_limit'=>1, 'current_devices'=>1, 'devices_remaining'=>0,
+                        'expires_at'=>$item['expires_at']];
+            }
+            return ['success'=>false, 'error'=>'Key not found.'];
+        });
+        reply(200, $res);
+    }
 }
 
 reply(404, ['ok'=>false, 'error'=>'Endpoint not found']);
